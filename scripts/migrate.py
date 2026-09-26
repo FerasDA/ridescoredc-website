@@ -62,10 +62,19 @@ def main() -> int:
     ours = database == urls["yoyo"]
     config = root / "api" / "yoyo.ini"
 
+    # uvx, not uv: it is a separate binary beside uv, and it is the one that
+    # fetches and runs yoyo. Saying which name was looked for, and that it was
+    # looked for on PATH, distinguishes "uv was never installed" from "uv is
+    # installed but this shell cannot see the directory it lives in" -- which is
+    # what happens over `ssh host 'bash -s'`, where no profile is read.
     if not shutil.which("uvx"):
         sys.exit(
-            "\nuv is not installed, and it is what runs the migration tool.\n\n"
-            "  https://docs.astral.sh/uv/getting-started/installation/\n"
+            "\nuvx was not found on PATH, and it is what runs the migration tool.\n\n"
+            "  If uv is not installed:\n"
+            "    https://docs.astral.sh/uv/getting-started/installation/\n\n"
+            "  If uv is installed, uvx sits beside it and that directory is not on\n"
+            "  PATH. Add it:\n"
+            '    PATH="$(dirname "$(command -v uv)"):$PATH"\n'
         )
 
     shown = urls["display"].replace("postgres:", "postgresql+psycopg:", 1)

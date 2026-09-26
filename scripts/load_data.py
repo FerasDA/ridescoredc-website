@@ -107,20 +107,45 @@ def restart_tile_server(root: Path) -> None:
     than leaving a step for someone to remember.
     """
     def compose(*args: str) -> list[str]:
+        """What Compose reports, or nothing at all on a machine without it.
+
+        A server runs these programs directly and may have no Docker installed,
+        so asking is allowed to come back empty -- but it must not raise, which
+        is what a missing `docker` does on its own.
+        """
+        if not shutil.which("docker"):
+            return []
         done = subprocess.run(
             ["docker", "compose", *args],
             cwd=root, capture_output=True, text=True, check=False,
         )
         return done.stdout.split() if done.returncode == 0 else []
 
-    # `config` reads the file and `ps` reads reality. Both are needed: a stack
-    # can be half up -- the database running while the tile server is not is
-    # exactly how someone loads data before starting everything else.
-    defined = compose("config", "--services")
+    def systemd_knows(unit: str) -> bool:
+        """Whether this machine runs the tile server as a system service."""
+        if not shutil.which("systemctl"):
+            return False
+        done = subprocess.run(
+            ["systemctl", "list-unit-files", unit],
+            capture_output=True, text=True, check=False,
+        )
+        return done.returncode == 0 and unit in done.stdout
+
+    # Ask what is running before asking what is configured. A server has this
+    # repository checked out too, so docker-compose.yml defines a martin service
+    # there as well -- reading the file first would conclude "a container will
+    # start later and pick this up" on a machine where Martin is a system
+    # service that has been running all along, and say so in place of the
+    # restart the operator actually has to perform.
     running = compose("ps", "--services")
 
-    if "martin" not in defined:
-        # A server, where Martin is a system service rather than a container.
+    if "martin" in running:
+        print("\n  restarting the tile server, so it sees the new data")
+        sys.stdout.flush()
+        subprocess.run(["docker", "compose", "restart", "martin"], cwd=root, check=False)
+        return
+
+    if systemd_knows("martin.service"):
         print(
             "\n  The tile server reads the database when it starts, so restart it\n"
             "  before the new data appears on the map:\n\n"
@@ -128,16 +153,12 @@ def restart_tile_server(root: Path) -> None:
         )
         return
 
-    if "martin" not in running:
-        print(
-            "\n  The tile server is not running. It reads the database when it\n"
-            "  starts, so it will pick up this data by itself.\n"
-        )
-        return
-
-    print("\n  restarting the tile server, so it sees the new data")
-    sys.stdout.flush()
-    subprocess.run(["docker", "compose", "restart", "martin"], cwd=root, check=False)
+    # Nothing is serving tiles yet. Whatever starts next reads the database as
+    # it comes up, so this data is waiting for it.
+    print(
+        "\n  The tile server is not running. It reads the database when it\n"
+        "  starts, so it will pick up this data by itself.\n"
+    )
 
 
 if __name__ == "__main__":

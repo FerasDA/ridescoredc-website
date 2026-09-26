@@ -58,13 +58,21 @@ echo "[deploy] deployed $(git rev-parse --short HEAD) — $(git log -1 --pretty=
 # uv is named by its path. This script runs over `ssh host 'bash -s'`, a
 # non-interactive shell that does not read a profile, so ~/.local/bin is not on
 # PATH and a bare `uv` would not be found -- even though it works when you log
-# in and try it.
-UV="${UV:-$HOME/.local/bin/uv}"
+# in and try it. A system-wide install is found too: /usr/local/bin is on the
+# PATH of even a non-interactive shell, so `command -v` sees it.
+UV="${UV:-$(command -v uv || echo "$HOME/.local/bin/uv")}"
 if [ ! -x "$UV" ]; then
   echo "[deploy] ERROR: uv is not at $UV, so migrations cannot be applied."
   echo "[deploy]        curl -LsSf https://astral.sh/uv/install.sh | sh"
   exit 1
 fi
+
+# uvx has to be reachable as well, and it is a separate binary beside uv.
+# scripts/migrate.py looks for it on PATH, which is exactly what this shell does
+# not have set up -- so calling uv by its path is not enough on its own. Adding
+# the directory uv came from puts uvx within reach.
+PATH="$(dirname "$UV"):$PATH"
+export PATH
 
 echo "[deploy] applying migrations"
 "$UV" run scripts/migrate.py

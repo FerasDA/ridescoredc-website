@@ -1,0 +1,40 @@
+# Martin's configuration on a server, where it runs as a system service rather
+# than a container. The Compose stack uses martin.yaml in the repository root;
+# this is the deployed equivalent of the same decision.
+#
+# Copy to /etc/martin/config.yaml, put the real connection string in, and point
+# the unit at it:
+#
+#   ExecStart=/usr/bin/martin --config /etc/martin/config.yaml
+#
+# The file then holds the database password, so keep it away from other accounts:
+#
+#   sudo chown root:<the user martin runs as> /etc/martin/config.yaml
+#   sudo chmod 640 /etc/martin/config.yaml
+#
+# Putting the connection string here rather than on the ExecStart line also
+# keeps it out of the unit file, which every account on the machine can read.
+#
+# ── Why the schema list matters ────────────────────────────────────────────────
+#
+# Martin published every schema it could see until this file existed. Left that
+# way it publishes data.road_segment, data.crashes and data.ridescore_v1_scores
+# as well -- every column, on the open internet, scores included.
+#
+# The survey depends on that not happening. A respondent is asked how safe a
+# street feels, and must not be shown our assessment of it first. The guarantee
+# is serving.survey_segments naming four columns and no score -- but a guarantee
+# about one view is worth nothing if the data schema is publishable beside it.
+#
+# So: serving, and only serving. The road data stays where only serving can
+# reach it.
+
+postgres:
+  connection_string: postgresql://USER:PASSWORD@localhost:5432/db
+  auto_publish:
+    tables:
+      from_schemas:
+        - serving
+    functions:
+      from_schemas:
+        - serving
