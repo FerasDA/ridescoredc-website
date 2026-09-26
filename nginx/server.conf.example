@@ -56,7 +56,7 @@ server {
     # Survey responses -> the API. No trailing slash, so the /api/ prefix
     # is kept and the route the application declares is the route that arrives.
     location /api/ {
-        proxy_pass http://127.0.0.1:8080;     # CHANGE if uvicorn listens elsewhere
+        proxy_pass http://127.0.0.1:8000;     # CHANGE if the API listens elsewhere
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -64,7 +64,7 @@ server {
     }
 
     location = /health {
-        proxy_pass http://127.0.0.1:8080/health;
+        proxy_pass http://127.0.0.1:8000/health;
         proxy_set_header Host $host;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
@@ -74,7 +74,7 @@ server {
 # Two notes for whoever applies this.
 #
 # The previous configuration sent every page request to the API with
-# `proxy_pass http://127.0.0.1:8080` under `location /`. The API no longer
+# `proxy_pass http://127.0.0.1:8000` under `location /`. The API no longer
 # serves pages, so that line must be replaced by the `root` and `try_files`
 # above or every page becomes a 404.
 #
