@@ -124,5 +124,7 @@ jobs:
         run: |
           eval $(ssh-agent -s)
           echo "$PRD_SSH_PRIVATE_KEY" | ssh-add -
+          mkdir -p ~/.ssh
+          ssh-keyscan -p $PRD_PORT $PRD_SERVER >> ~/.ssh/known_hosts
           ssh -p $PRD_PORT $PRD_USER@$PRD_SERVER 'bash -s' < scripts/gitlab-ci/deployment.sh $PRD_PATH $PRD_USER main
           touch deploy-success
