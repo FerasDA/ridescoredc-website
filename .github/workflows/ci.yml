@@ -24,7 +24,7 @@ env:
   STG_PORT: 22
   STG_PATH: /opt/ridescoredc-website
   PRD_SERVER: ridescoredc.com
-  PRD_USER: ubuntu
+  PRD_USER: fastapi
   PRD_PORT: 22
   PRD_PATH: /opt/ridescoredc-website
 
@@ -55,7 +55,7 @@ jobs:
   # database and would not notice a migration that does not parse. A deploy now
   # applies migrations, so a broken one would stop a deploy rather than be found
   # by a person.
-  migrations:
+  check-migrations:
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -91,7 +91,7 @@ jobs:
 
   stage:
     runs-on: ubuntu-latest
-    needs: [lint, test, migrations]
+    needs: [lint, test, check-migrations]
     if: github.ref == 'refs/heads/develop'
     environment:
       name: staging
@@ -111,7 +111,7 @@ jobs:
 
   deploy:
     runs-on: ubuntu-latest
-    needs: [lint, test, migrations]
+    needs: [lint, test, check-migrations]
     if: github.ref == 'refs/heads/main'
     environment:
       name: production
