@@ -4,29 +4,34 @@ import uuid
 from contextlib import asynccontextmanager
 from typing import List, Optional
 
-import psycopg2
-import psycopg2.extras
+import psycopg
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 DATABASE_URL = os.environ["DATABASE_URL"]
 
+# This service answers two things: it records a survey response, and it says
+# whether it can reach the database. It serves no pages -- nginx does that
+# directly -- and it does not serve the map, which the browser gets from Martin.
+
 
 def get_conn():
-    return psycopg2.connect(DATABASE_URL)
+    return psycopg.connect(DATABASE_URL)
 
 
 def init_db(retries: int = 10, delay: float = 2.0):
-    sql = open("init.sql").read()
+    # Gate startup on the database being reachable (matters under docker-compose,
+    # where db and app boot together). No schema is created here: the survey
+    # tables come from this repository's own migrations in api/migrations/, and
+    # the road data is loaded from a published package built by ridescoredc-models.
     for attempt in range(retries):
         try:
-            conn = get_conn()
-            with conn:
+            # psycopg 3: the connection context manager commits (or rolls back)
+            # and closes the connection on exit -- no explicit close needed.
+            with get_conn() as conn:
                 with conn.cursor() as cur:
-                    cur.execute(sql)
-            conn.close()
+                    cur.execute("SELECT 1")
             return
         except Exception as exc:
             if attempt == retries - 1:
@@ -55,14 +60,14 @@ app.add_middleware(
 class ContiguousSegment(BaseModel):
     sequence_index: int
     route_name: Optional[str] = None
-    ogc_fids: List[int]
+    segment_ids: List[str]
     lts_perceived: Optional[int] = None
     safety_rating: Optional[int] = None
     stress_factors: Optional[List[str]] = None
 
 
 class SurveySubmission(BaseModel):
-    route_ogc_fids: List[int]
+    segment_ids: List[str]
     contiguous_segments: List[ContiguousSegment]
     time_of_day: Optional[str] = None
     overall_satisfaction: Optional[int] = None
@@ -73,23 +78,40 @@ class SurveySubmission(BaseModel):
 
 # ── Endpoints ───────────────────────────────────────────────────────────────
 
+def geometry_source(cur) -> str:
+    """Which published road data the segment ids in a response refer to.
+
+    Read from the database rather than taken from the browser: the page cannot
+    know which package was loaded, and a response that names the wrong one
+    cannot be interpreted later.
+    """
+    cur.execute("SELECT package FROM data.load_record WHERE dataset = 'road_segment'")
+    row = cur.fetchone()
+    if row is None:
+        raise HTTPException(
+            status_code=503,
+            detail="No road data is loaded, so a response cannot be tied to a road network.",
+        )
+    return row[0]
+
+
 @app.post("/api/submissions", status_code=201)
 def create_submission(body: SurveySubmission):
     submission_id = str(uuid.uuid4())
     try:
-        conn = get_conn()
-        with conn:
+        with get_conn() as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     """
-                    INSERT INTO survey_submissions
-                        (submission_id, route_ogc_fids, time_of_day,
+                    INSERT INTO app.survey_submissions
+                        (submission_id, segment_ids, geometry_source, time_of_day,
                          overall_satisfaction, would_ride_again, trip_purpose, comments)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                     """,
                     (
                         submission_id,
-                        body.route_ogc_fids,
+                        body.segment_ids,
+                        geometry_source(cur),
                         body.time_of_day,
                         body.overall_satisfaction,
                         body.would_ride_again,
@@ -102,8 +124,8 @@ def create_submission(body: SurveySubmission):
                     seg_id = str(uuid.uuid4())
                     cur.execute(
                         """
-                        INSERT INTO survey_contiguous_segments
-                            (id, submission_id, sequence_index, route_name, ogc_fids,
+                        INSERT INTO app.survey_contiguous_segments
+                            (id, submission_id, sequence_index, route_name, segment_ids,
                              lts_perceived, safety_rating, stress_factors)
                         VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                         """,
@@ -112,25 +134,26 @@ def create_submission(body: SurveySubmission):
                             submission_id,
                             seg.sequence_index,
                             seg.route_name,
-                            seg.ogc_fids,
+                            seg.segment_ids,
                             seg.lts_perceived,
                             seg.safety_rating,
                             seg.stress_factors,
                         ),
                     )
 
-                    for seq_idx, ogc_fid in enumerate(seg.ogc_fids):
+                    for seq_idx, segment_id in enumerate(seg.segment_ids):
                         cur.execute(
                             """
-                            INSERT INTO survey_granular_segments
-                                (submission_id, ogc_fid, contiguous_segment_id, sequence_index)
+                            INSERT INTO app.survey_granular_segments
+                                (submission_id, segment_id, contiguous_segment_id,
+                                 sequence_index)
                             VALUES (%s, %s, %s, %s)
-                            ON CONFLICT (submission_id, ogc_fid) DO NOTHING
+                            ON CONFLICT (submission_id, segment_id) DO NOTHING
                             """,
-                            (submission_id, ogc_fid, seg_id, seq_idx),
+                            (submission_id, segment_id, seg_id, seq_idx),
                         )
-
-        conn.close()
+    except HTTPException:
+        raise
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
 
@@ -145,6 +168,3 @@ def health():
         return {"status": "ok"}
     except Exception as exc:
         raise HTTPException(status_code=503, detail=str(exc))
-
-
-app.mount("/", StaticFiles(directory="static", html=True), name="static")

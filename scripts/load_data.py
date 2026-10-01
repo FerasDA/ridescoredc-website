@@ -1,0 +1,165 @@
+#!/usr/bin/env python3
+"""Load published road data into a database.
+
+    uv run scripts/load_data.py                       the latest published data
+    uv run scripts/load_data.py --version 0.1         a particular release
+    uv run scripts/load_data.py --package DIR --bundle DIR
+    uv run scripts/load_data.py --database URL        somewhere other than here
+
+On a contributor's machine `npm run data` calls exactly this.
+
+A package is the data a pipeline run produced: roads, crashes and scores. A
+bundle is the SQL deciding what a map may show of them. The two are published
+and versioned separately, so changing what the map shows does not mean
+republishing the data.
+
+The loading itself is done by a program in the pipeline repository, fetched and
+run in one step, so this repository carries no copy of it that could drift.
+Where it comes from is in `data_source.py`.
+"""
+
+from __future__ import annotations
+
+import argparse
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from data_source import asset_url, data_source  # noqa: E402
+from db import database_urls, settings, wait_for_database  # noqa: E402
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    parser.add_argument("--version", help="a published release, e.g. 0.1")
+    parser.add_argument("--package", help="a directory, or an address")
+    parser.add_argument("--bundle", help="a directory, or an address")
+    parser.add_argument("--database", help="where to load it")
+    parser.add_argument(
+        "--wait", type=int, default=90,
+        help="seconds to wait for the database (0 to not wait)",
+    )
+    args = parser.parse_args()
+
+    root = Path(__file__).resolve().parent.parent
+    found = settings(root)
+    source = data_source(found)
+
+    package = args.package or asset_url(source, args.version, source["package_file"])
+    bundle = args.bundle or asset_url(source, args.version, source["bundle_file"])
+
+    for label, value in (("package", package), ("bundle", bundle)):
+        if not value.startswith("http") and not Path(value).exists():
+            sys.exit(f"\nNo {label} at {value}\n")
+
+    urls = database_urls(root)
+    database = args.database or urls["direct"]
+    ours = database == urls["direct"]
+
+    if not shutil.which("uv"):
+        sys.exit(
+            "\nuv is not installed, and it is what runs the loader.\n\n"
+            "  https://docs.astral.sh/uv/getting-started/installation/\n"
+        )
+
+    # Printed so this teaches the command rather than replacing it. The password
+    # is hidden; everything else is exactly what runs.
+    print(
+        f"\n  uv run {source['loader']} \\\n"
+        f"    --package {package} \\\n"
+        f"    --bundle {bundle} \\\n"
+        f"    --database {urls['display'] if ours else '<the database you gave>'}\n"
+    )
+
+    sys.stdout.flush()
+
+    if ours and args.wait:
+        wait_for_database(urls, seconds=args.wait)
+
+    result = subprocess.run(
+        ["uv", "run", source["loader"],
+         "--package", package, "--bundle", bundle, "--database", database],
+        check=False,
+    )
+    if result.returncode != 0:
+        return result.returncode
+
+    restart_tile_server(root)
+
+    print("\n  Road data loaded. Create the survey tables next:")
+    print("    uv run scripts/migrate.py        (or: npm run migrate)\n")
+    return 0
+
+
+def restart_tile_server(root: Path) -> None:
+    """Make the tile server look at the database again.
+
+    Martin reads the database once, when it starts, and publishes what it finds.
+    A stack started before any data was loaded therefore publishes nothing, and
+    stays that way: the data appears, and the map shows no roads at all, with
+    every tile a 404 and no indication why.
+
+    That happens on every first run, because a database can only be filled after
+    the thing serving it is up. So loading data restarts the tile server, rather
+    than leaving a step for someone to remember.
+    """
+    def compose(*args: str) -> list[str]:
+        """What Compose reports, or nothing at all on a machine without it.
+
+        A server runs these programs directly and may have no Docker installed,
+        so asking is allowed to come back empty -- but it must not raise, which
+        is what a missing `docker` does on its own.
+        """
+        if not shutil.which("docker"):
+            return []
+        done = subprocess.run(
+            ["docker", "compose", *args],
+            cwd=root, capture_output=True, text=True, check=False,
+        )
+        return done.stdout.split() if done.returncode == 0 else []
+
+    def systemd_knows(unit: str) -> bool:
+        """Whether this machine runs the tile server as a system service."""
+        if not shutil.which("systemctl"):
+            return False
+        done = subprocess.run(
+            ["systemctl", "list-unit-files", unit],
+            capture_output=True, text=True, check=False,
+        )
+        return done.returncode == 0 and unit in done.stdout
+
+    # Ask what is running before asking what is configured. A server has this
+    # repository checked out too, so docker-compose.yml defines a martin service
+    # there as well -- reading the file first would conclude "a container will
+    # start later and pick this up" on a machine where Martin is a system
+    # service that has been running all along, and say so in place of the
+    # restart the operator actually has to perform.
+    running = compose("ps", "--services")
+
+    if "martin" in running:
+        print("\n  restarting the tile server, so it sees the new data")
+        sys.stdout.flush()
+        subprocess.run(["docker", "compose", "restart", "martin"], cwd=root, check=False)
+        return
+
+    if systemd_knows("martin.service"):
+        print(
+            "\n  The tile server reads the database when it starts, so restart it\n"
+            "  before the new data appears on the map:\n\n"
+            "    sudo systemctl restart martin\n"
+        )
+        return
+
+    # Nothing is serving tiles yet. Whatever starts next reads the database as
+    # it comes up, so this data is waiting for it.
+    print(
+        "\n  The tile server is not running. It reads the database when it\n"
+        "  starts, so it will pick up this data by itself.\n"
+    )
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
