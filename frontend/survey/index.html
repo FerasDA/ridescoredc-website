@@ -107,7 +107,7 @@
 
   /* Drawing help stays off the map until someone asks for it. */
   #mode-help[hidden] { display: none; }
-  #mode-help { width: 50px; justify-content: center; padding: 0; }
+  #mode-help { width: 50px; justify-content: center; padding: 7px 0; }
   .mode-hint {
     display: none; position: fixed; top: 102px; left: 12px;
     width: min(320px, calc(100vw - 24px));
@@ -563,7 +563,7 @@
 <body>
 
 <!-- ── Logo ── -->
-<button id="logo-box" onclick="toggleAttribution()">
+<button id="logo-box" onclick="closeModeHelp(); toggleAttribution()">
   <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18.5" cy="17.5" r="3.5"/><circle cx="5.5" cy="17.5" r="3.5"/><path d="M15 6a1 1 0 1 0 0-2 1 1 0 0 0 0 2zm-3 11.5V14l-3-3 4-3 2 3h2"/></svg>
   DC Bike Safety
 </button>
@@ -976,9 +976,20 @@ function toggleModeHelp() {
   const show = !hint.classList.contains('visible');
   closeModeHelp();
   if (show) {
+    // The data sources panel sits in the same place on a phone, and this one
+    // is painted over it, so showing both leaves its Close button unreachable.
+    closeAttribution();
     hint.classList.add('visible');
     modeHelpBtn.setAttribute('aria-expanded', 'true');
   }
+}
+
+// toggleAttribution lives in the shared basemap script and keeps its own idea
+// of whether the panel is open, so close it by asking it to toggle rather than
+// by stripping the class, which would leave the two disagreeing.
+function closeAttribution() {
+  const panel = document.getElementById('attribution-panel');
+  if (panel && panel.classList.contains('open')) toggleAttribution();
 }
 
 function syncModeHelp() {
@@ -992,7 +1003,18 @@ function syncModeHelp() {
 }
 
 document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape') closeModeHelp();
+  const t = e.target;
+  if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA')) return;
+  if (e.key !== 'Escape') return;
+
+  // Only take the key when there is help to close. Unpaint mode reads Escape
+  // as "leave the mode", and one press should not do both.
+  if (!paintHint.classList.contains('visible') &&
+      !unpaintHint.classList.contains('visible')) return;
+
+  e.preventDefault();
+  e.stopImmediatePropagation();
+  closeModeHelp();
 });
 
 function togglePaintMode() {
