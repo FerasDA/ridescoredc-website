@@ -58,7 +58,7 @@
   }
   @media (max-width: 768px) {
     /* Push controls below the DC Bike Safety logo button so they never overlap */
-    .controls { top: 52px; }
+    .controls { top: 62px; }
   }
   .ctrl-btn {
     background: #fff; border: 1px solid #d1d5db; color: #334155;
@@ -533,6 +533,32 @@
     margin-top: 6px; padding: 10px 24px; border: none;
     border-radius: 8px; background: #1a1a2e; color: #fff;
     font: 600 13px 'Inter'; cursor: pointer;
+  }
+
+  /* Leave enough room for a finger on the phone survey. */
+  @media (max-width: 768px) {
+    body.survey-active #map { bottom: 50dvh; }
+    #survey-sheet { height: 50dvh; }
+    #attribution-panel { top: 166px; }
+    #paint-hint, #unpaint-hint { bottom: 200px; }
+
+    #logo-box, #attribution-panel .close-btn, .ctrl-btn, .badge-btn,
+    .ss-close, .ss-seg, .ss-lb, .ss-lts-info-btn,
+    .ss-check-item, .ss-time-btn, .ss-cal-btn, .ss-tvol-btn,
+    .ss-btn-back, .ss-btn-next, .ss-btn-finish, .ss-confirm button,
+    .survey-close, .rating-btn, .time-btn, .traffic-vol-btn {
+      min-height: 44px;
+    }
+
+    .ss-close, .survey-close, .ss-btn-back { min-width: 44px; }
+    .ss-close, .survey-close { padding: 0; }
+    .ss-lts-info-btn { padding: 0 8px; }
+
+    /* Ten choices cannot fit in one row at a usable touch size. */
+    #ss-safety-row {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+    }
   }
 </style>
 </head>
